@@ -1,122 +1,95 @@
-# Import necessary libraries
-import numpy as np
-import matplotlib.pyplot as plt
 import cv2
-
-# Load image and convert it from BGR to RGB
-image = cv2.cvtColor(cv2.imread("test_img.jpg"), cv2.COLOR_BGR2RGB)
-
-
-def resize(img, height=800):
-    """ Resize image to given height """
-    rat = height / img.shape[0]
-    return cv2.resize(img, (int(rat * img.shape[1]), height))
-
-# Resize and convert to grayscale
-img = cv2.cvtColor(resize(image), cv2.COLOR_BGR2GRAY)
-
-# Bilateral filter preserv edges
-img = cv2.bilateralFilter(img, 9, 75, 75)
-
-# Create black and white image based on adaptive threshold
-img = cv2.adaptiveThreshold(img, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 115, 4)
-
-# Median filter clears small details
-img = cv2.medianBlur(img, 11)
-
-# Add black border in case that page is touching an image border
-img = cv2.copyMakeBorder(img, 5, 5, 5, 5, cv2.BORDER_CONSTANT, value=[0, 0, 0])
-
-edges = cv2.Canny(img, 200, 250)
-
-# Getting contours
-contours, hierarchy = cv2.findContours(edges, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-
-# Finding contour of biggest rectangle
-# Otherwise return corners of original image
-# Don't forget on our 5px border!
-height = edges.shape[0]
-width = edges.shape[1]
-MAX_COUNTOUR_AREA = (width - 10) * (height - 10)
-
-# Page fill at least half of image, then saving max area found
-maxAreaFound = MAX_COUNTOUR_AREA * 0.5
-
-# Saving page contour
-pageContour = np.array([[5, 5], [5, height-5], [width-5, height-5], [width-5, 5]])
+import numpy as np
+import sys
 
 
+def image_read(image_address):
+    image = cv2.imread(image_address)
+    # Scale down/up image to a size that opencv can work with
+    image = cv2.resize(image, (1200, 800))
+    return image
 
 
-# Go through all contours
-for cnt in contours:
-    # Simplify contour
-    perimeter = cv2.arcLength(cnt, True)
-    approx = cv2.approxPolyDP(cnt, 0.03 * perimeter, True)
-
-    # Page has 4 corners and it is convex
-    # Page area must be bigger than maxAreaFound
-    if (len(approx) == 4 and
-            cv2.isContourConvex(approx) and
-            maxAreaFound < cv2.contourArea(approx) < MAX_COUNTOUR_AREA):
-
-        maxAreaFound = cv2.contourArea(approx)
-        pageContour = approx
-
-# Result in pageConoutr (numpy array of 4 points):
-
-def fourCornersSort(pts):
-    """ Sort corners: top-left, bot-left, bot-right, top-right """
-    # Difference and sum of x and y value
-    # Inspired by http://www.pyimagesearch.com
-    diff = np.diff(pts, axis=1)
-    summ = pts.sum(axis=1)
-
-    # Top-left point has smallest sum...
-    # np.argmin() returns INDEX of min
-    return np.array([pts[np.argmin(summ)],
-                     pts[np.argmax(diff)],
-                     pts[np.argmax(summ)],
-                     pts[np.argmin(diff)]])
+def image_gray(image):
+    gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    return gray_image
 
 
-def contourOffset(cnt, offset):
-    """ Offset contour, by 5px border """
-    # Matrix addition
-    cnt += offset
-
-    # if value < 0 => replace it by 0
-    cnt[cnt < 0] = 0
-    return cnt
+def image_blur(image):
+    blurred_image = cv2.GaussianBlur(image, KERNEL_SIZE, BLUR_INTENSITY)
+    return blurred_image
 
 
-# Sort and offset corners
-pageContour = fourCornersSort(pageContour[:, 0])
-pageContour = contourOffset(pageContour, (-5, -5))
+def image_canny(image):
+    edged_image = cv2.Canny(image, MIN_THRESH, MAX_THRESH)
+    return edged_image
 
-# Recalculate to original scale - start Points
-sPoints = pageContour.dot(image.shape[0] / 800)
 
-# Using Euclidean distance
-# Calculate maximum height (maximal length of vertical edges) and width
-height = max(np.linalg.norm(sPoints[0] - sPoints[1]),
-             np.linalg.norm(sPoints[2] - sPoints[3]))
-width = max(np.linalg.norm(sPoints[1] - sPoints[2]),
-            np.linalg.norm(sPoints[3] - sPoints[0]))
+def find_image_contours(image):
+    image_contours, image_hierarchy = cv2.findContours(image, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+    return image_contours, image_hierarchy
 
-# Create target points
-tPoints = np.array([[0, 0],
-                    [0, height],
-                    [width, height],
-                    [width, 0]], np.float32)
 
-# getPerspectiveTransform() needs float32
-if sPoints.dtype != np.float32:
-    sPoints = sPoints.astype(np.float32)
+def sort_contours(contours):
+    sorted_contours = sorted(contours, key=cv2.contourArea, reverse=True)
+    return sorted_contours
 
-# Wraping perspective
-M = cv2.getPerspectiveTransform(sPoints, tPoints)
-newImage = cv2.warpPerspective(image, M, (int(width), int(height)))
 
-# Saving the result. Yay! (don't forget to convert colors bact to BGR)
-cv2.imwrite("resultImage.jpg", cv2.cvtColor(newImage, cv2.COLOR_BGR2RGB))
+def map_corners(corner):
+    corner = corner.reshape((4, 2))
+    corner_resize = np.zeros((4, 2), dtype=np.float32)
+
+    add = corner.sum(1)
+    corner_resize[0] = corner[np.argmin(add)]
+    corner_resize[2] = corner[np.argmax(add)]
+
+    diff = np.diff(corner, axis=1)
+    corner_resize[1] = corner[np.argmin(diff)]
+    corner_resize[3] = corner[np.argmax(diff)]
+    return corner_resize
+
+
+def find_page_contours(contours):
+    for c in contours:
+        p = cv2.arcLength(c, True)
+        points = cv2.approxPolyDP(c, 0.02*p, True)
+
+        if len(points) == 4:
+            target = points
+            break
+    points = map_corners(target)
+    return points
+
+
+def bird_eye_view(original_image, endpoints):
+    pts = np.float32([[0, 0], [800, 0], [800, 800], [0, 800]])
+    perspective = cv2.getPerspectiveTransform(endpoints, pts)
+    bird_eye_image = cv2.warpPerspective(original_image, perspective, (800, 800))
+    return bird_eye_image
+
+
+def sharpen_image(bird_eye_image):
+    sharpened_image = cv2.filter2D(bird_eye_image, -1, SHARPENING_KERNEL)
+    return sharpened_image
+
+
+KERNEL_SIZE = (5, 5)
+BLUR_INTENSITY = 0
+MIN_THRESH = 30
+MAX_THRESH = 50
+SHARPENING_KERNEL = np.array([[-1, -1, -1],
+                              [-1, 9, -1],
+                              [-1, -1, -1]])
+
+address = sys.argv[1]
+original = image_read(address)
+gray_scale = image_gray(original)
+blurred = image_blur(gray_scale)
+edged = image_canny(blurred)
+con, h = find_image_contours(edged)
+con = sort_contours(con)
+approx = find_page_contours(con)
+hey = bird_eye_view(original, approx)
+hoy = sharpen_image(hey)
+cv2.imshow('Image Sharpening', hoy)
+cv2.waitKey(0)
