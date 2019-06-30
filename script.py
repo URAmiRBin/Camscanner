@@ -69,16 +69,28 @@ def bird_eye_view(original_image, endpoints):
 
 
 def sharpen_image(bird_eye_image):
-    sharpened_image = cv2.filter2D(bird_eye_image, -1, SHARPENING_KERNEL)
-    return sharpened_image
+    img = bird_eye_image
+    lab= cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
 
+    l, a, b = cv2.split(lab)
+
+    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
+    cl = clahe.apply(l)
+
+    limg = cv2.merge((cl,a,b))
+
+    final = cv2.cvtColor(limg, cv2.COLOR_LAB2BGR)
+    sharpened_image = cv2.filter2D(final, -1, SHARPENING_KERNEL)
+    
+    
+    return sharpened_image
 
 KERNEL_SIZE = (5, 5)
 BLUR_INTENSITY = 0
 MIN_THRESH = 30
 MAX_THRESH = 50
 SHARPENING_KERNEL = np.array([[-1, -1, -1],
-                              [-1, 9, -1],
+                              [-1, 9.35, -1],
                               [-1, -1, -1]])
 
 address = sys.argv[1]
